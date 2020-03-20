@@ -100,6 +100,7 @@ process runSTAR2pass {
 
   module params.modules.star
   module params.modules.samtools
+  module params.modules.htslib
 
   input:
   set indivID, sampleID, libraryID, rgID, platform_unit, platform,
