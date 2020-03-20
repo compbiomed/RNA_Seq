@@ -193,6 +193,7 @@ process runRSEM {
   tag "Running RSEM on ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSEM"
 
+  module params.modules.R
   module params.modules.rsem
 
   input:
