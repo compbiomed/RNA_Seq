@@ -685,7 +685,7 @@ process createSE {
     ".+_(R[12])_.+", "\\\\1", rownames(aggregate.by)
   )
 
-  reads <- if (${params.paired_end} == "true") c("R1", "R2") else c("R1")
+  reads <- if ("${params.paired_end}" == "true") c("R1", "R2") else c("R1")
   for (read in reads) {
     i <- which(aggregate.by[["read"]] == read)
     aggregate.by[["sample"]][i] <- output[["inputfile"]][["SAMPLE_ID"]][
