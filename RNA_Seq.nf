@@ -763,12 +763,21 @@ process createSE {
 
   # Reformat each data frame ###################################################
 
-  for (i in seq_along(output)) {
+  for (i in which(names(output) != "inputfile")) {
     # Reorder rows of each data frame to match order of rows in input file
-    output[[i]] <- output[[i]][
-      pmatch(rownames(output[["inputfile"]]), rownames(output[[i]])),
-      , drop=FALSE
-    ]
+    # Note: a while loop is used because pmatch() returns NA where there are
+    #       multiple matches, e.g.,
+    #         pmatch("Sample_1", c("Sample_1.bam", "Sample_10.bam")) == NA
+    #       Each iteration excludes any values that were previously matched.
+    j <- rep(NA_integer_, n.samples)
+    k <- seq(n.samples)
+    while (any(is.na(j))) {
+      j[is.na(j)] <- pmatch(
+        rownames(output[["inputfile"]])[is.na(j)], rownames(output[[i]])[k]
+      )
+      k[j[!is.na(j)]] <- NA_integer_
+    }
+    output[[i]] <- output[[i]][j, , drop=FALSE]
     # 1. Replace "%" with "percent", e.g., "%GC" -> "percent GC"
     # 2. Replace whitespace/punctuation in column names with underscores
     # 3. Remove trailing underscores from column names
@@ -781,7 +790,7 @@ process createSE {
   # Combine output into a single data frame ####################################
 
   # Initialize with sample names from input file, then add each table in turn
-  SE.colData <- data.frame(row.names=row.names(output[["inputfile"]]))
+  SE.colData <- data.frame(row.names=rownames(output[["inputfile"]]))
   for (i in seq_along(output)) {
     SE.colData <- cbind(SE.colData, output[[i]])
   }
@@ -859,8 +868,12 @@ process createSE {
 
   for (type in c("gene", "isoform")) {
     # Reorder RSEM output files to match order of sample annotation
+    filename.suffix <- paste0("\\\\.", type, "s", "\\\\.results\$")
     rsem.filenames[[type]] <- rsem.filenames[[type]][
-      pmatch(rownames(SE.colData), basename(rsem.filenames[[type]]))
+      match(
+        rownames(SE.colData),
+        sub(filename.suffix, "", basename(rsem.filenames[[type]]))
+      )
     ]
     # Read the RSEM output files into a list of matrices
     SE.assays <- list()
