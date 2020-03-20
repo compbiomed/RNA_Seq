@@ -733,7 +733,9 @@ process createSE {
   # Floating point values:
   #   TIN(mean), TIN(median), TIN(stdev)
 
-  tinfiles <- c('${rseqc_tin_files.join("','")}')
+  tinfiles <- c(
+    '${rseqc_tin_files.join("',\n'")}'
+  )
   output[["tinfiles"]] <- c(
     # Get tab-delimited column names from first line of first file
     readLines(tinfiles[1], n=1),
@@ -753,7 +755,9 @@ process createSE {
 
   # Read tables, placing first column ("Sample") in row names
   # and adding prefix to column names
-  multiqc.rseqc.filenames <- c('${multiqc_rseqc_files.join("','")}')
+  multiqc.rseqc.filenames <- c(
+    '${multiqc_rseqc_files.join("',\n'")}'
+  )
   for (filename in multiqc.rseqc.filenames) {
     output[[basename(filename)]] <- read.wsv(filename, row.names=1)
     colnames(output[[basename(filename)]]) <- paste(
@@ -850,12 +854,20 @@ process createSE {
 
   # Copy Nextflow variables into R variables
   rsem.filenames <- list(
-    gene=c('${rsem_genes_files.join("','")}'),
-    isoform=c('${rsem_isoforms_files.join("','")}')
+    gene=c(
+      '${rsem_genes_files.join("',\n'")}'
+    ),
+    isoform=c(
+      '${rsem_isoforms_files.join("',\n'")}'
+    )
   )
   biomart.attributes <- list(
-    gene = c('${params.createSE.biomart_attributes.gene.join("','")}'),
-    isoform = c('${params.createSE.biomart_attributes.isoform.join("','")}')
+    gene = c(
+      '${params.createSE.biomart_attributes.gene.join("',\n'")}'
+    ),
+    isoform = c(
+      '${params.createSE.biomart_attributes.isoform.join("',\n'")}'
+    )
   )
   rds.files <- c(gene='${rds_files.gene}', isoform='${rds_files.isoform}')
 
