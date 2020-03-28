@@ -683,7 +683,7 @@ process createSE {
   # and read IDs to look up the sample IDs from input table
   aggregate.by[["sample"]] <- NA_character_
   aggregate.by[["read"]] <- sub(
-    ".+_(R[12])_.+", "\\\\1", rownames(aggregate.by)
+    ".+_(R[12]).+", "\\\\1", rownames(aggregate.by)
   )
 
   reads <- if ("${params.paired_end}" == "true") c("R1", "R2") else c("R1")
