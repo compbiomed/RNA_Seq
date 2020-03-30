@@ -98,9 +98,9 @@ process runSTAR2pass {
   tag "Running STAR second pass on ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}"
 
+  module params.modules.htslib
   module params.modules.star
   module params.modules.samtools
-  module params.modules.htslib
 
   input:
   set indivID, sampleID, libraryID, rgID, platform_unit, platform,
@@ -136,6 +136,9 @@ process runSTAR2pass {
   // Files to be stored, but not passed on to other processes
   set file(outfile_bai), file(outfile_bambai) \
     into runSTAR2passOutput
+  // Output bam file to Mark Duplicates
+  set indivID, sampleID, file(outfile_bam) \
+    into runSTAR2pass_to_runMarkDuplicates
 
   script:
   star_output_path = "Processing/Libraries/${libraryID}/${rgID}/STAR_2Pass"
@@ -683,7 +686,7 @@ process createSE {
   # and read IDs to look up the sample IDs from input table
   aggregate.by[["sample"]] <- NA_character_
   aggregate.by[["read"]] <- sub(
-    ".+_(R[12]).+", "\\\\1", rownames(aggregate.by)
+    ".+_(R[12])_.+", "\\\\1", rownames(aggregate.by)
   )
 
   reads <- if ("${params.paired_end}" == "true") c("R1", "R2") else c("R1")
@@ -927,6 +930,264 @@ process createSE {
   }
   """
 }
+
+process runMarkDuplicates {
+  tag "Running Mark Duplicates for ${sampleID}"
+  publishDir "${params.output_dir}/${indivID}/${sampleID}/Processing/MarkDuplicates"
+
+  module "${params.modules.python3}:${params.modules.picard}:${params.modules.java}"
+
+  input:
+  set indivID, sampleID, bam from runSTAR2pass_to_runMarkDuplicates
+
+  output:
+  set indivID, sampleID, file(dedup_bam), file(dedup_bai) \
+      into runMarkDuplicates_to_runSplitNCigarReads
+  file(outfile_metrics) into runMarkDuplicatesOutput_to_MultiQC
+
+  script:
+    dedup_bam = sampleID + ".dedup.bam"
+    dedup_bai = sampleID + ".dedup.bai"
+    outfile_metrics = sampleID + "_duplicate_metrics.txt"
+  """
+  module list
+
+  MEM_TOTAL="\$(qstat -j \$JOB_ID | grep -oP "mem_total=[^,]+" | cut -f2 -d'=')"
+  ## remember to add mem_total
+  java \$([ \$MEM_TOTAL != "" ] && echo "-Xmx\$MEM_TOTAL") \
+       -XX:ParallelGCThreads=\$NSLOTS \
+       -Djava.io.tmpdir=tmp/ \
+       -jar "\$SCC_PICARD_DIR/DIST/picard.jar" \
+       MarkDuplicates \
+       INPUT=${bam} \
+       OUTPUT=${dedup_bam} \
+       METRICS_FILE=${outfile_metrics} \
+       CREATE_INDEX=true \
+       TMP_DIR=tmp
+
+
+  """
+}
+
+process runSplitNCigarReads {
+  tag "${indivID}|${sampleID}"
+  publishDir "${OUTDIR}/${indivID}/${sampleID}/Processing/SplitNCigarReads"
+
+  module "${params.modules.gatk}:${params.modules.java_1_8}"
+
+  input:
+  set indivID, sampleID, dedup_bam, dedup_bai from \
+    runMarkDuplicates_to_runSplitNCigarReads
+
+  output:
+  set indivID, sampleID, file(splitNreads_bam) \
+    into runSplitNCigarReads_to_groupTuple
+
+  file(splitNreads_bai) into runsplitNCigarReadsOutput
+
+  script:
+  splitNreads_bam = sampleID + ".splitNreads.bam"
+  splitNreads_bai = sampleID + ".splitNreads.bai"
+
+  """
+  module list
+
+  # Get 'mem_total' SGE resource value from comma-delimited hard resource list;
+  # if it is set, it will be used to set heap size for Java call
+  MEM_TOTAL="\$(qstat -j \$JOB_ID | grep -oP "mem_total=[^,]+" | cut -f2 -d'=')"
+  echo \$MEM_TOTAL
+
+  java \$([ \$MEM_TOTAL != "" ] && echo "-Xmx\$MEM_TOTAL") \
+    -XX:ParallelGCThreads=\$NSLOTS \
+    -Djava.io.tmpdir=tmp/ \
+    -jar "\$SCC_GATK_DIR/install/GenomeAnalysisTK.jar" \
+    -T SplitNCigarReads \
+    -R ${params.ref_fasta} \
+    -I ${dedup_bam} \
+    -o ${splitNreads_bam} \
+    -rf ReassignOneMappingQuality \
+    -RMQF 255 \
+    -RMQT 60 \
+    -U ALLOW_N_CIGAR_READS
+  """
+}
+
+// Combine samples from the same Individual
+runSplitNCigarReads_to_runGATK = \
+  runSplitNCigarReads_to_groupTuple.groupTuple()
+
+process runGATK {
+  tag "${indivID}"
+  publishDir "${OUTDIR}/${indivID}/Processing/RealignerTargetCreator/"
+
+  module "${params.modules.gatk}:${params.modules.java_1_8}"
+
+  input:
+  set indivID, sampleID, splitNreads_bam_list \
+    from runSplitNCigarReads_to_runGATK
+
+  output:
+  set file('*.realign.bam'), file(recal_table) \
+    into runBaseRecalibratorOutput
+  set file('*.realign.bai') into runIndelRealignerOutputBai
+  set file(target_file) into runRealignerTargetCreatorOutput
+  set file(clean_bam), file(clean_bai)\
+    into runPrintReadsOutput
+  file(filter_vcf_outfile) into runGATK_to_runCombineVariants
+
+
+  script:
+  target_file = indivID + "_target_intervals.list"
+  recal_table = sampleID[0] + "_recal_table.txt"
+  realign_bam = sampleID[0] + ".realign.bam"
+  clean_bam = sampleID[0] + ".clean.bam"
+  clean_bai = sampleID[0] + ".clean.bai"
+  post_recal_table = sampleID[0] + "_post_recal_table.txt"
+  recal_plots = sampleID[0] + "_recal_plots.pdf"
+  htc_outfile = sampleID[0] + ".raw.vcf"
+  filter_vcf_outfile = sampleID[0] + ".filter.vcf"
+
+  """
+  # Load and list modules
+  module list
+
+  # Get 'mem_total' SGE resource value from comma-delimited hard resource list;
+  # if it is set, it will be used to set heap size for Java call
+
+  MEM_TOTAL="\$(qstat -j \$JOB_ID | grep -oP "mem_total=[^,]+" | cut -f2 -d'=')"
+
+  java \$([ \$MEM_TOTAL != "" ] && echo "-Xmx\$MEM_TOTAL") \
+       -XX:ParallelGCThreads=\$NSLOTS \
+       -Djava.io.tmpdir=tmp/ \
+       -jar "\$SCC_GATK_DIR/install/GenomeAnalysisTK.jar" \
+       -T RealignerTargetCreator \
+       -R ${params.ref_fasta} \
+       -I ${splitNreads_bam_list.join(" -I ")} \
+       -known ${params.GATK.gold_indels1} \
+       -known ${params.GATK.gold_indels2} \
+       -o ${target_file}
+
+  java \$([ \$MEM_TOTAL != "" ] && echo "-Xmx\$MEM_TOTAL") \
+       -XX:ParallelGCThreads=1 \
+       -Djava.io.tmpdir=tmp/ \
+       -jar "\$SCC_GATK_DIR/install/GenomeAnalysisTK.jar" \
+       -T IndelRealigner \
+       -R ${params.ref_fasta} \
+       -I ${splitNreads_bam_list.join(" -I ")} \
+       -targetIntervals ${target_file} \
+       -known ${params.GATK.gold_indels1} \
+       -known ${params.GATK.gold_indels2} \
+       -o ${realign_bam} \
+       --maxReadsInMemory 500000
+
+  REALIGN_BAM=`ls *.realign.bam`
+
+  java \$([ \$MEM_TOTAL != "" ] && echo "-Xmx\$MEM_TOTAL") \
+       -XX:ParallelGCThreads=\$NSLOTS \
+       -Djava.io.tmpdir=tmp/ \
+       -jar "\$SCC_GATK_DIR/install/GenomeAnalysisTK.jar" \
+       -T BaseRecalibrator \
+       -R ${params.ref_fasta} \
+       -I \$REALIGN_BAM \
+       -knownSites ${params.GATK.gold_indels1} \
+       -knownSites ${params.GATK.gold_indels2} \
+       -knownSites ${params.GATK.dbsnp} \
+       -o ${recal_table}
+
+  java \$([ \$MEM_TOTAL != "" ] && echo "-Xmx\$MEM_TOTAL") \
+       -XX:ParallelGCThreads=\$NSLOTS \
+       -Djava.io.tmpdir=tmp/ \
+       -jar "\$SCC_GATK_DIR/install/GenomeAnalysisTK.jar" \
+       -T PrintReads \
+       -R ${params.ref_fasta} \
+       -I \$REALIGN_BAM \
+       -BQSR ${recal_table} \
+       -o ${clean_bam}
+
+
+  java \$([ \$MEM_TOTAL != "" ] && echo "-Xmx\$MEM_TOTAL") \
+       -XX:ParallelGCThreads=\$NSLOTS \
+       -Djava.io.tmpdir=tmp/ \
+       -jar "\$SCC_GATK_DIR/install/GenomeAnalysisTK.jar" \
+       -T BaseRecalibrator \
+       -I \$REALIGN_BAM \
+       -R ${params.ref_fasta} \
+       -knownSites ${params.GATK.gold_indels1} \
+       -knownSites ${params.GATK.gold_indels2} \
+       -knownSites ${params.GATK.dbsnp} \
+       -BQSR ${recal_table} \
+       -o ${post_recal_table}
+
+  java \$([ \$MEM_TOTAL != "" ] && echo "-Xmx\$MEM_TOTAL") \
+       -XX:ParallelGCThreads=\$NSLOTS \
+       -Djava.io.tmpdir=tmp/ \
+       -jar "\$SCC_GATK_DIR/install/GenomeAnalysisTK.jar" \
+       -T AnalyzeCovariates \
+       -R ${params.ref_fasta} \
+       -before ${recal_table} \
+       -after ${post_recal_table} \
+       -plots ${recal_plots}
+
+  java \$([ \$MEM_TOTAL != "" ] && echo "-Xmx\$MEM_TOTAL") \
+       -XX:ParallelGCThreads=\$NSLOTS \
+       -Djava.io.tmpdir=tmp/ \
+       -jar "\$SCC_GATK_DIR/install/GenomeAnalysisTK.jar" \
+       -T HaplotypeCaller \
+       -R ${params.ref_fasta} \
+       -I ${clean_bam} \
+       -dontUseSoftClippedBases \
+       -stand_call_conf 20.0 \
+       --dbsnp ${params.GATK.dbsnp} \
+       -L ${params.gene_bed} \
+       -o ${htc_outfile}
+
+  java \$([ \$MEM_TOTAL != "" ] && echo "-Xmx\$MEM_TOTAL") \
+       -XX:ParallelGCThreads=\$NSLOTS \
+       -Djava.io.tmpdir=tmp/ \
+       -jar "\$SCC_GATK_DIR/install/GenomeAnalysisTK.jar" \
+       -T VariantFiltration \
+       -R ${params.ref_fasta} \
+       -V ${htc_outfile} \
+       -window 35 -cluster 3 \
+       -filterName FS -filter "FS > 30.0" \
+       -filterName QD -filter "QD < 2.0" \
+       -o ${filter_vcf_outfile}
+  """
+}
+
+process runCombineVariants {
+  tag "Combining VCFs"
+  publishDir "${OUTDIR}/Output/Variants"
+  module "${params.modules.gatk}:${params.modules.java_1_8}"
+
+  input:
+  val(vcf) from runGATK_to_runCombineVariants.flatten().toSortedList()
+
+  output:
+  file(outfile) into runCombineVariantsforinferAncestry
+
+  script:
+  outfile = "${params.prefix}" + ".filter.vcf"
+
+  """
+  # Load and list modules
+  module list
+
+  # Get 'mem_total' SGE resource value from comma-delimited hard resource list;
+  # if it is set, it will be used to set heap size for Java call
+  MEM_TOTAL="\$(qstat -j \$JOB_ID | grep -oP "mem_total=[^,]+" | cut -f2 -d'=')"
+
+  java \$([ \$MEM_TOTAL != "" ] && echo "-Xmx\$MEM_TOTAL") \
+       -XX:ParallelGCThreads=\$NSLOTS \
+       -Djava.io.tmpdir=tmp/ \
+       -jar "\$SCC_GATK_DIR/install/GenomeAnalysisTK.jar" \
+       -T CombineVariants \
+       -R ${params.ref_fasta} \
+       -V ${vcf.join(" -V ")} \
+       -o ${outfile}
+  """
+}
+
 
 workflow.onComplete {
   log.info ""
