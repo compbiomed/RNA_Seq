@@ -32,9 +32,9 @@ This is a Nextflow pipeline that contains the following processes:
 - `runRSEM`: Use [RSEM](https://deweylab.github.io/RSEM/) to estimate gene- and transcript (isoform)-level expression
 - `createSE`: Create [SummarizedExperiment](https://bioconductor.org/packages/release/bioc/html/SummarizedExperiment.html) R objects, one for gene-level expression and one for transcript-level expression; each object contains several estimates of expression from RSEM, as well as feature-level annotation
 
-### `RNA_Seq.config`
+### `RNA_Seq_template.config`
 
-This is a configuration file intended to be used only with this Nextflow script.  It makes a number of assumptions about underlying directory structures and filenames.
+This is a template configuration file intended to be used only with this Nextflow script.  It makes a number of assumptions about underlying directory structures and filenames.
 The parameters that are typically changed are:
 
 #### `params.infile`
