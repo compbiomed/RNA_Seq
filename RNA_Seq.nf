@@ -99,8 +99,8 @@ process runSTAR2pass {
   publishDir "${params.output_dir}/${indivID}/${sampleID}"
 
   module params.modules.star
-  module params.modules.samtools
   module params.modules.htslib
+  module params.modules.samtools
 
   input:
   set indivID, sampleID, libraryID, rgID, platform_unit, platform,
