@@ -4,7 +4,6 @@
 
 // Global variables for required parameters
 inputFile = file(params.infile)
-inputFileHeader = params.infile_header
 
 logParams(params, "nextflow_parameters.txt")
 
@@ -19,7 +18,7 @@ log.info ""
 // Send FASTQ files to FastQC and STAR /////////////////////////////////////////
 
 Channel.from(inputFile)
-  .splitCsv(sep: '\t', header: inputFileHeader)
+  .splitCsv(sep: '\t', header: true)
   .into {
     readInput_to_runFastQC
     readInput_to_runSTAR1pass
