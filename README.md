@@ -72,7 +72,7 @@ This script kicks off the Nextflow process on the SGE using the .config file spe
 
 1. Create a run directory, change current directory to it, and retrieve files from GitHub using the command:
 
-   `git pull https://github.com/compbiomed/RNA_Seq`
+   `git clone https://github.com/compbiomed/RNA_Seq`
 
 2. Generate a tab-delimited Nextflow input file following the format described above under `params.infile`.
 
