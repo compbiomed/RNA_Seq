@@ -1,5 +1,29 @@
 # RNA-seq Nextflow pipeline and associated files
 
+## Setting up a new run
+
+1. Create a run directory, change current directory to it, and retrieve files from GitHub using the command:
+
+   `git clone https://github.com/compbiomed/RNA_Seq`
+
+2. Generate a tab-delimited Nextflow input file following the format described below under `params.infile`.
+
+3. Edit the `RNA-seq_template.config` file:
+   - Set `params.infile` to the full path to the tab-delimited file describing the FASTQ input files.
+   - Set `params.output_dir` to the full path to the Nextflow run directory.
+   - Set `params.prefix` to a meaningful name for the project.  This string will be used as a prefix to label many output files.
+   - Set the fields of `params.genome` as needed depending on the species being analyzed.
+   - Uncomment fields of `params.createSE.biomart_attributes` depending on the species being analyzed and the Ensembl version being used.
+   - Change `params.read_length`, `params.paired_end`, and `params.stranded` if needed (rare).
+
+4. Rename the `RNA-seq_template.config` file to something more meaningful (e.g., the value of `params.prefix` with the extension `.config`)
+
+5. Start the Nextflow run using the qsub file as follows:
+
+   `qsub submit_RNA_Seq.qsub [config filename]`
+
+This will run the Nextflow script `RNA_Seq.nf` using the input file and config files from steps 2-4.
+
 ## Description of files
 
 ### `RNA_Seq.nf`
@@ -67,27 +91,3 @@ Parameters specific to the genome and annotation build used; these can be uncomm
 
 ### `submit_RNA_Seq.qsub`
 This script kicks off the Nextflow process on the SGE using the .config file specified in its sole argument.
-
-## Setting up a new run
-
-1. Create a run directory, change current directory to it, and retrieve files from GitHub using the command:
-
-   `git clone https://github.com/compbiomed/RNA_Seq`
-
-2. Generate a tab-delimited Nextflow input file following the format described above under `params.infile`.
-
-3. Edit the `RNA-seq_template.config` file:
-   - Set `params.infile` to the full path to the tab-delimited file describing the FASTQ input files.
-   - Set `params.output_dir` to the full path to the Nextflow run directory.
-   - Set `params.prefix` to a meaningful name for the project.  This string will be used as a prefix to label many output files.
-   - Set the fields of `params.genome` as needed depending on the species being analyzed.
-   - Uncomment fields of `params.createSE.biomart_attributes` depending on the species being analyzed and the Ensembl version being used.
-   - Change `params.read_length`, `params.paired_end`, and `params.stranded` if needed (rare).
-
-4. Rename the `RNA-seq_template.config` file to something more meaningful (e.g., the value of `params.prefix` with the extension `.config`)
-
-5. Start the Nextflow run using the qsub file as follows:
-
-   `qsub submit_RNA_Seq.qsub [config filename]`
-
-This will run the Nextflow script `RNA_Seq.nf` using the input file and config files from steps 2-4.
