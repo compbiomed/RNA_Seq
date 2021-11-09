@@ -63,9 +63,9 @@ The parameters that are typically changed are:
 
 #### `params.infile`
 Path to a TSV file containing the following columns:
-- `INDIVIDUAL_ID`: An ID for an individual from which one or more samples was obtained
-- `SAMPLE_ID`: An ID for each sample
-- `LIBRARY_ID`: An ID for each library prepared from a sample
+- `INDIVIDUAL_ID`: An ID for an individual from which one or more samples was obtained.  **This field cannot be left blank or set to `NA`; set this field to the same as `SAMPLE_ID` if only one sample was obtained from each individual.**
+- `SAMPLE_ID`: An ID for each sample.  **This field cannot be left blank or set to `NA`.**
+- `LIBRARY_ID`: An ID for each library prepared from a sample.  **This field cannot be left blank or set to `NA`; set this field to the same as `SAMPLE_ID` if only one library was prepared from each sample.**
 - `RG_ID`: Read Group ID: the flowcell ID, optionally followed by a lane-specific suffix (for instruments with independent lanes)
 - `PLATFORM_UNIT`: The RG ID, followed by a suffix specific to a sample/library
 - `PLATFORM`: Sequencing platform, e.g., "illumina" for Illumina instruments

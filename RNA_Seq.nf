@@ -50,8 +50,7 @@ process runSTAR1pass {
 
   STAR \
     --genomeDir ${params.STAR.genomeDir} \
-    --readFilesIn ${R1} \
-      \$([[ "${params.paired_end}" == "true" ]] && echo "${R2}") \
+    --readFilesIn '${R1}' '${params.paired_end ? "${R2}": ""}' \
     --runThreadN \$NSLOTS \
     --outFileNamePrefix ${star_outFileNamePrefix} \
     --outSAMtype BAM Unsorted \
@@ -72,7 +71,7 @@ process runSTARgenomeGenerate {
   val sjdb_files from runSTAR1pass_to_runSTARgenomeGenerate.toSortedList()
 
   output:
-  file("${genomeDir}/*") into runSTARgenomeGenerateOutput
+  file("Log.out") into runSTARgenomeGenerateOutput
   file("${genomeDir}") into runSTARgenomeGenerate_to_runSTAR2pass
 
   script:
@@ -166,8 +165,7 @@ process runSTAR2pass {
   mkdir -p ${star_output_path}/
   STAR \
     --genomeDir ${genomeDir} \
-    --readFilesIn "${R1}" \
-      \$([[ "${params.paired_end}" == "true" ]] && echo "${R2}") \
+    --readFilesIn '${R1}' '${params.paired_end ? "${R2}": ""}' \
     --runThreadN \$NSLOTS \
     --outFileNamePrefix ${star_outFileNamePrefix} \
     --outSAMtype BAM SortedByCoordinate \
@@ -220,9 +218,8 @@ process runRSEM {
   # Compute expression values using RSEM
   rsem-calculate-expression \
     --calc-ci --estimate-rspd --no-bam-output --bam \
-    \$([[ "${params.paired_end}" == "true" ]] && echo "--paired-end") \
-    --forward-prob \
-      \$([[ "${params.stranded}" == "true" ]] && echo 0 || echo 0.5) \
+    ${params.paired_end ? "--paired-end" : ""} \
+    --forward-prob ${params.stranded ? 0 : 0.5} \
     -p \$NSLOTS \
     ${star_transcriptome_bam} \
     ${params.RSEM.reference} \
@@ -253,9 +250,7 @@ process runFastQC {
   module list
 
   # Run FastQC
-  fastqc -t 1 -o . \
-    ${R1} \
-    \$([[ "${params.paired_end}" == "true" ]] && echo "${R2}")
+  fastqc -t \$NSLOTS -o . '${R1}' '${params.paired_end ? "${R2}" : ""}'
   """
 }
 
@@ -292,7 +287,7 @@ process runRSeQC_clipping_profile {
   """
   module list
   clipping_profile.py -i ${bam} -o ${sampleID} \
-    -s \$([[ "${params.paired_end}" == "true" ]] && echo "PE" || echo "SE")
+    -s ${params.paired_end ? "PE" : "SE"}
   """
 }
 process runRSeQC_deletion_profile {
@@ -369,7 +364,7 @@ process runRSeQC_insertion_profile {
   """
   module list
   insertion_profile.py -i ${bam} -o ${sampleID} \
-    -s \$([[ "${params.paired_end}" == "true" ]] && echo "PE" || echo "SE")
+    -s ${params.paired_end ? "PE" : "SE"}
   """
 }
 process runRSeQC_junction_annotation {
@@ -685,8 +680,7 @@ process createSE {
     ".+_(R[12]).+", "\\\\1", rownames(aggregate.by)
   )
 
-  reads <- if ("${params.paired_end}" == "true") c("R1", "R2") else c("R1")
-  for (read in reads) {
+  for (read in ${params.paired_end ? 'c("R1", "R2")' : 'c("R1")'}) {
     i <- which(aggregate.by[["read"]] == read)
     aggregate.by[["sample"]][i] <- output[["inputfile"]][["SAMPLE_ID"]][
       match(rownames(aggregate.by)[i], basename(output[["inputfile"]][[read]]))
