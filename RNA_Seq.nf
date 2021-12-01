@@ -637,7 +637,7 @@ process createSE {
   # Aggregate by individual ID, sample ID, library ID
   output[["inputfile"]] <- aggregate(
     output[["inputfile"]],
-    by=output[["inputfile"]][c("INDIVIDUAL_ID","SAMPLE_ID","LIBRARY_ID")],
+    by=output[["inputfile"]]["SAMPLE_ID"],
     FUN=paste, collapse=","
   )
   # Remove aggregation columns and copy SAMPLE_ID column into row names
