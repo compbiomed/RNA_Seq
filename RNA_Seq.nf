@@ -634,14 +634,15 @@ process createSE {
     "${params.infile}", stringsAsFactors=FALSE
   )
   n.samples <- nrow(output[["inputfile"]])
-  # Aggregate by individual ID, sample ID, library ID
+  # Aggregate input data frame by specified variables
+  aggregate.by <- c("SAMPLE_ID")
   output[["inputfile"]] <- aggregate(
     output[["inputfile"]],
-    by=output[["inputfile"]]["SAMPLE_ID"],
+    by=output[["inputfile"]][aggregate.by],
     FUN=paste, collapse=","
   )
-  # Remove aggregation columns and copy SAMPLE_ID column into row names
-  output[["inputfile"]] <- output[["inputfile"]][-(1:3)]
+  # Remove any aggregation columns and copy SAMPLE_ID column into row names
+  output[["inputfile"]] <- output[["inputfile"]][-seq_along(aggregate.by)]
   rownames(output[["inputfile"]]) <- output[["inputfile"]][["SAMPLE_ID"]]
 
   # Parse MultiQC FastQC output table ##########################################
