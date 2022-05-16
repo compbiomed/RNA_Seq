@@ -1,6 +1,6 @@
 #!/usr/bin/env nextflow
 
-// Rewritten by Adam Gower, based on scripts by Yusuke Koga
+// Rewritten by Adam Gower, based on scripts by Josh Campbell and Yusuke Koga
 
 // Global variables for required parameters
 inputFile = file(params.infile)
@@ -24,6 +24,102 @@ Channel.from(inputFile)
     readInput_to_runSTAR1pass
     readInput_to_runSTAR2pass
   }
+
+// Retrieve and process Ensembl GTF and BED files //////////////////////////////
+
+process generateGTF {
+  tag "Retrieving and processing Ensembl GTF file"
+  publishDir "${params.output_dir}/Output/GTF"
+
+  output:
+  file(ensembl_gtf_file) \
+    into (
+      generateGTF_to_generateBED,
+      generateGTF_to_runSTARgenomeGenerate,
+      generateGTF_to_runRSEMprepareReference,
+      generateGTF_to_createSE
+    )
+
+  script:
+  // Set parameters specific to chromAlias table
+  chromAlias_url =
+    "${params.urls.ucsc_base_url}/goldenPath/" +
+    "${params.genome.ucsc}/database/chromAlias.txt.gz"
+  chromAlias_join_field = 1
+
+  // Construct Ensembl GTF URL
+  ensembl_gtf_url =
+    "${params.urls.ensembl_base_url}/release-${params.genome.ensembl}/gtf/" +
+    "${params.genome.species.toLowerCase().replaceAll(" ","_")}" + "/" +
+    "${params.genome.species.replaceAll(" ","_")}" + "." +
+    "${params.genome.assembly}.${params.genome.ensembl}.gtf.gz"
+  // Construct output GTF filename with suffix based on genomic subset used
+  ensembl_gtf_file = "${file(ensembl_gtf_url).name}"
+  ensembl_gtf_file =
+    "${ensembl_gtf_file.replaceFirst("\\.gtf\\.gz", "")}" + "." +
+    "ucsc.${params.genome.set}.gtf.gz"
+
+  """
+  # Retrieve and gunzip chromAlias file from UCSC, keeping only first two
+  # columns, and sorting on first column (non-UCSC alias) 
+  wget ${chromAlias_url} -O - | zcat | cut -f1-2 | sort -k1 > chromAlias.txt
+
+  # Create a regex that will match any GTF lines
+  # beginning with one of the sequence names present in the FASTA file
+  readarray -t seq_names < <(grep '^>' ${params.ref_fasta} | sed -r 's/^>//')
+  seq_name_regex="\$(IFS='|'; echo "^(\${seq_names[*]})")"
+
+  # The following command:
+  # - retrieves and extracts the GTF file from Ensembl,
+  #   removing comments and sorting on first column
+  # - uses `join` to convert chromosome names in first column of GTF file
+  #   to UCSC nomenclature, and removes redundant first column of output
+  # - Limits the output to only those sequence names in the FASTA file
+  # - writes the modified GTF to a gzipped file
+  join -t \$'\\t' -1 ${chromAlias_join_field} -2 1 \
+    chromAlias.txt \
+    <(wget ${ensembl_gtf_url} -O - | zgrep -v "^#" | sort -k1) \
+    | cut -f2- \
+    | grep -E "\${seq_name_regex}" \
+    | gzip -c > ${ensembl_gtf_file}
+  """
+}
+
+process generateBED {
+  tag "Generating Ensembl BED file"
+  publishDir "${params.output_dir}/Output/BED"
+
+  input:
+  file(ensembl_gtf_file) from generateGTF_to_generateBED
+
+  output:
+  file(ensembl_bed_file) \
+    into (
+      generateBED_to_runRSeQCgeneBodyCoverage,
+      generateBED_to_runRSeQCinferExperiment,
+      generateBED_to_runRSeQCinnerDistance,
+      generateBED_to_runRSeQCjunctionAnnotation,
+      generateBED_to_runRSeQCjunctionSaturation,
+      generateBED_to_runRSeQCreadDistribution,
+      generateBED_to_runRSeQCtin
+    )
+
+  script:
+  ensembl_gp_file =
+    "${ensembl_gtf_file.name.replaceFirst("\\.gtf\\.gz", ".gp")}"
+  ensembl_bed_file =
+    "${ensembl_gtf_file.name.replaceFirst("\\.gtf\\.gz", ".bed")}"
+
+  """
+  # Retrieve command-line utilities from UCSC and make them executable
+  wget ${params.urls.ucsc_app_url}/gtfToGenePred
+  wget ${params.urls.ucsc_app_url}/genePredToBed
+  chmod +x gtfToGenePred genePredToBed
+  # Convert GTF file to BED file via intermediate genePred format
+  ./gtfToGenePred ${ensembl_gtf_file} ${ensembl_gp_file}
+  ./genePredToBed ${ensembl_gp_file} ${ensembl_bed_file}
+  """
+}
 
 // First-pass STAR alignment ///////////////////////////////////////////////////
 
@@ -69,6 +165,7 @@ process runSTARgenomeGenerate {
   input:
   // Method toSortedList() used to ensure task will be cached, not resubmitted
   val sjdb_files from runSTAR1pass_to_runSTARgenomeGenerate.toSortedList()
+  file(ensembl_gtf_file) from generateGTF_to_runSTARgenomeGenerate
 
   output:
   file("Log.out") into runSTARgenomeGenerateOutput
@@ -76,16 +173,22 @@ process runSTARgenomeGenerate {
 
   script:
   genomeDir="genomeGenerate"
+  sjdbGTFfile="${ensembl_gtf_file.name.replaceFirst("\\.gz", "")}"
 
   """
   module list
+
+  # Create output directory
   mkdir ${genomeDir}/
+  # Decompress GTF to temporary file
+  zcat ${ensembl_gtf_file} > ${sjdbGTFfile}
+
   STAR \
     --runMode genomeGenerate \
     --genomeDir ${genomeDir} \
     --genomeFastaFiles ${params.ref_fasta} \
     --sjdbFileChrStartEnd ${sjdb_files.join(' ')} \
-    --sjdbGTFfile ${params.gene_gtf} \
+    --sjdbGTFfile ${sjdbGTFfile} \
     --sjdbOverhang ${params.read_length - 1} \
     --runThreadN \$NSLOTS \
     --limitSjdbInsertNsj ${params.STAR.limitSjdbInsertNsj}
@@ -112,25 +215,25 @@ process runSTAR2pass {
   // Output to RSeQC
   set indivID, sampleID, file(outfile_bam) \
     into (
-      runSTAR2pass_to_RSeQC_bam_stat,
-      runSTAR2pass_to_RSeQC_geneBody_coverage,
-      runSTAR2pass_to_RSeQC_junction_annotation,
-      runSTAR2pass_to_RSeQC_junction_saturation,
-      runSTAR2pass_to_RSeQC_tin,
-      runSTAR2pass_to_RSeQC_inner_distance,
-      runSTAR2pass_to_RSeQC_clipping_profile,
-      runSTAR2pass_to_RSeQC_infer_experiment,
-      runSTAR2pass_to_RSeQC_insertion_profile,
-      runSTAR2pass_to_RSeQC_deletion_profile,
-      runSTAR2pass_to_RSeQC_read_distribution,
-      runSTAR2pass_to_RSeQC_QC,
-      runSTAR2pass_to_RSeQC_read_duplication,
-      runSTAR2pass_to_RSeQC_read_NVC,
-      runSTAR2pass_to_RSeQC_read_quality
+      runSTAR2pass_to_runRSeQCbamStat,
+      runSTAR2pass_to_runRSeQCgeneBodyCoverage,
+      runSTAR2pass_to_runRSeQCjunctionAnnotation,
+      runSTAR2pass_to_runRSeQCjunctionSaturation,
+      runSTAR2pass_to_runRSeQCtin,
+      runSTAR2pass_to_runRSeQCinnerDistance,
+      runSTAR2pass_to_runRSeQCclippingProfile,
+      runSTAR2pass_to_runRSeQCinferExperiment,
+      runSTAR2pass_to_runRSeQCinsertionProfile,
+      runSTAR2pass_to_runRSeQCdeletionProfile,
+      runSTAR2pass_to_runRSeQCreadDistribution,
+      runSTAR2pass_to_runRSeQCreadGC,
+      runSTAR2pass_to_runRSeQCreadDuplication,
+      runSTAR2pass_to_runRSeQCreadNVC,
+      runSTAR2pass_to_runRSeQCreadQuality
     )
   // Output to RSEM
   set indivID, sampleID, file(star_transcriptome_bam) \
-    into runSTAR2pass_to_runRSEM
+    into runSTAR2pass_to_runRSEMcalculateExpression
   // Files to be stored, but not passed on to other processes
   set file(outfile_bai), file(outfile_bambai) \
     into runSTAR2passOutput
@@ -187,8 +290,42 @@ process runSTAR2pass {
   """
 }
 
-process runRSEM {
-  tag "Running RSEM on ${sampleID}"
+process runRSEMprepareReference {
+  tag "Preparing RSEM reference"
+  publishDir "${params.output_dir}/Output/RSEM"
+
+  module params.modules.rsem
+
+  input:
+  file(ensembl_gtf_file) from generateGTF_to_runRSEMprepareReference
+
+  output:
+  // Folder containing RSEM reference files (with prefix of same name as folder)
+  file(reference_name) \
+    into runRSEMprepareReference_to_runRSEMcalculateExpression
+
+  script:
+  reference_name="${ensembl_gtf_file.name.replaceFirst("\\.gtf\\.gz", "")}"
+  rsem_gtf_file="${ensembl_gtf_file.name.replaceFirst("\\.gz", "")}"
+  """
+  module list
+
+  # Create output directory, named after prefix of GTF file
+  mkdir ${reference_name}/
+  # Decompress GTF to temporary file
+  zcat ${ensembl_gtf_file} > ${rsem_gtf_file}
+
+  # Prepare RSEM reference files, named after prefix of GTF file
+  rsem-prepare-reference \
+    -p \$NSLOTS \
+    --gtf ${rsem_gtf_file} \
+    ${params.ref_fasta} \
+    ${reference_name}/${reference_name}
+  """
+}
+
+process runRSEMcalculateExpression {
+  tag "Using RSEM to calculate expression values for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSEM"
 
   module params.modules.R
@@ -196,14 +333,19 @@ process runRSEM {
 
   input:
   set indivID, sampleID, star_transcriptome_bam \
-    from runSTAR2pass_to_runRSEM
+    from runSTAR2pass_to_runRSEMcalculateExpression
+  // Folder containing RSEM reference files (with prefix of same name as folder)
+  file(rsemReference) \
+    from runRSEMprepareReference_to_runRSEMcalculateExpression
 
   output:
   // RSEM output files used to create SummarizedExperiment objects
-  file("${sampleID}.genes.results") into runRSEM_genes_to_createSE
-  file("${sampleID}.isoforms.results") into runRSEM_isoforms_to_createSE
+  file("${sampleID}.genes.results") \
+    into runRSEMcalculateExpressionGenes_to_createSE
+  file("${sampleID}.isoforms.results") \
+    into runRSEMcalculateExpressionIsoforms_to_createSE
   // Files to be stored, but not passed on to other processes
-  file(outfile_plot) into runRSEMOutput
+  file(outfile_plot) into runRSEMcalculateExpressionOutput
 
   script:
   outfile_plot = "${sampleID}_RSEM.pdf"
@@ -222,7 +364,7 @@ process runRSEM {
     --forward-prob ${params.stranded ? 0 : 0.5} \
     -p \$NSLOTS \
     ${star_transcriptome_bam} \
-    ${params.RSEM.reference} \
+    ${rsemReference}/${rsemReference} \
     ${sampleID}
 
   rsem-plot-model ${sampleID} ${outfile_plot}
@@ -261,28 +403,28 @@ process runFastQC {
 // enough that more than one script can run at a time): the scripts do not need
 // to be run sequentially.
 
-process runRSeQC_bam_stat {
+process runRSeQCbamStat {
   tag "Running RSeQC bam_stat for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
   module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_bam_stat
+  set indivID, sampleID, bam from runSTAR2pass_to_runRSeQCbamStat
   output:
-  file("${sampleID}.bam_stat.txt") into runRSeQC_bam_stat_to_runMultiQCSample
+  file("${sampleID}.bam_stat.txt") into runRSeQCbamStat_to_runMultiQCSample
   script:
   """
   module list
   bam_stat.py -i ${bam} > ${sampleID}.bam_stat.txt
   """
 }
-process runRSeQC_clipping_profile {
+process runRSeQCclippingProfile {
   tag "Running RSeQC clipping_profile for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
   module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_clipping_profile
+  set indivID, sampleID, bam from runSTAR2pass_to_runRSeQCclippingProfile
   output:
-  file("${sampleID}.*") into runRSeQC_clipping_profile_Output
+  file("${sampleID}.*") into runRSeQCclippingProfileOutput
   script:
   """
   module list
@@ -290,76 +432,79 @@ process runRSeQC_clipping_profile {
     -s ${params.paired_end ? "PE" : "SE"}
   """
 }
-process runRSeQC_deletion_profile {
+process runRSeQCdeletionProfile {
   tag "Running RSeQC deletion_profile for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
   module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_deletion_profile
+  set indivID, sampleID, bam from runSTAR2pass_to_runRSeQCdeletionProfile
   output:
-  file("${sampleID}.*") into runRSeQC_deletion_profile_Output
+  file("${sampleID}.*") into runRSeQCdeletionProfileOutput
   script:
   """
   module list
   deletion_profile.py -i ${bam} -l ${params.read_length} -o ${sampleID}
   """
 }
-process runRSeQC_geneBody_coverage {
+process runRSeQCgeneBodyCoverage {
   tag "Running RSeQC geneBody_coverage for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
   module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_geneBody_coverage
+  set indivID, sampleID, bam from runSTAR2pass_to_runRSeQCgeneBodyCoverage
+  file(ensembl_bed_file) from generateBED_to_runRSeQCgeneBodyCoverage
   output:
   file("${sampleID}.geneBodyCoverage.txt") \
-    into runRSeQC_geneBody_coverage_to_runMultiQCSample
-  file("${sampleID}.*") into runRSeQC_geneBody_coverage_Output
+    into runRSeQCgeneBodyCoverage_to_runMultiQCSample
+  file("${sampleID}.*") into runRSeQCgeneBodyCoverageOutput
   script:
   """
   module list
-  geneBody_coverage.py -i ${bam} -r ${params.gene_bed} -o ${sampleID}
+  geneBody_coverage.py -i ${bam} -r ${ensembl_bed_file} -o ${sampleID}
   """
 }
-process runRSeQC_infer_experiment {
+process runRSeQCinferExperiment {
   tag "Running RSeQC infer_experiment for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
   module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_infer_experiment
+  set indivID, sampleID, bam from runSTAR2pass_to_runRSeQCinferExperiment
+  file(ensembl_bed_file) from generateBED_to_runRSeQCinferExperiment
   output:
   file("${sampleID}.infer_experiment.txt") \
-    into runRSeQC_infer_experiment_to_runMultiQCSample
+    into runRSeQCinferExperiment_to_runMultiQCSample
   script:
   """
   module list
-  infer_experiment.py -i ${bam} -r ${params.gene_bed} > \
+  infer_experiment.py -i ${bam} -r ${ensembl_bed_file} > \
     ${sampleID}.infer_experiment.txt
   """
 }
-process runRSeQC_inner_distance {
+process runRSeQCinnerDistance {
   tag "Running RSeQC inner_distance for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
   module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_inner_distance
+  set indivID, sampleID, bam from runSTAR2pass_to_runRSeQCinnerDistance
+  file(ensembl_bed_file) from generateBED_to_runRSeQCinnerDistance
   output:
   file("${sampleID}.inner_distance_freq.txt") \
-    into runRSeQC_inner_distance_to_runMultiQCSample
-  file("${sampleID}.*") into runRSeQC_inner_distance_Output
+    into runRSeQCinnerDistance_to_runMultiQCSample
+  file("${sampleID}.*") into runRSeQCinnerDistanceOutput
   script:
   """
   module list
-  inner_distance.py -i ${bam} -r ${params.gene_bed} -o ${sampleID}
+  inner_distance.py -i ${bam} -r ${ensembl_bed_file} -o ${sampleID}
   """
 }
-process runRSeQC_insertion_profile {
+process runRSeQCinsertionProfile {
   tag "Running RSeQC insertion_profile for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
   module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_insertion_profile
+  set indivID, sampleID, bam from runSTAR2pass_to_runRSeQCinsertionProfile
   output:
-  file("${sampleID}.*") into runRSeQC_insertion_profile_Output
+  file("${sampleID}.*") into runRSeQCinsertionProfileOutput
   script:
   """
   module list
@@ -367,127 +512,131 @@ process runRSeQC_insertion_profile {
     -s ${params.paired_end ? "PE" : "SE"}
   """
 }
-process runRSeQC_junction_annotation {
+process runRSeQCjunctionAnnotation {
   tag "Running RSeQC junction_annotation for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
   module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_junction_annotation
+  set indivID, sampleID, bam from runSTAR2pass_to_runRSeQCjunctionAnnotation
+  file(ensembl_bed_file) from generateBED_to_runRSeQCjunctionAnnotation
   output:
   file("${sampleID}.junction_annotation.txt") \
-    into runRSeQC_junction_annotation_to_runMultiQCSample
-  file("${sampleID}.*") into runRSeQC_junction_annotation_Output
+    into runRSeQCjunctionAnnotation_to_runMultiQCSample
+  file("${sampleID}.*") into runRSeQCjunctionAnnotationOutput
   script:
   """
   module list
-  junction_annotation.py -i ${bam} -r ${params.gene_bed} -o ${sampleID} 2> \
+  junction_annotation.py -i ${bam} -r ${ensembl_bed_file} -o ${sampleID} 2> \
     ${sampleID}.junction_annotation.txt
   """
 }
-process runRSeQC_junction_saturation {
+process runRSeQCjunctionSaturation {
   tag "Running RSeQC junction_saturation for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
   module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_junction_saturation
+  set indivID, sampleID, bam from runSTAR2pass_to_runRSeQCjunctionSaturation
+  file(ensembl_bed_file) from generateBED_to_runRSeQCjunctionSaturation
   output:
   file("${sampleID}.junctionSaturation_plot.r") \
-    into runRSeQC_junction_saturation_to_runMultiQCSample
-  file("${sampleID}.*") into runRSeQC_junction_saturation_Output
+    into runRSeQCjunctionSaturation_to_runMultiQCSample
+  file("${sampleID}.*") into runRSeQCjunctionSaturationOutput
   script:
   """
   module list
-  junction_saturation.py -i ${bam} -r ${params.gene_bed} -o ${sampleID}
+  junction_saturation.py -i ${bam} -r ${ensembl_bed_file} -o ${sampleID}
   """
 }
-process runRSeQC_read_distribution {
+process runRSeQCreadDistribution {
   tag "Running RSeQC read_distribution for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
   module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_read_distribution
+  set indivID, sampleID, bam from runSTAR2pass_to_runRSeQCreadDistribution
+  file(ensembl_bed_file) from generateBED_to_runRSeQCreadDistribution
   output:
   file("${sampleID}.read_distribution.txt") \
-    into runRSeQC_read_distribution_to_runMultiQCSample
+    into runRSeQCreadDistribution_to_runMultiQCSample
   script:
   """
   module list
-  read_distribution.py -i ${bam} -r ${params.gene_bed} > \
+  read_distribution.py -i ${bam} -r ${ensembl_bed_file} > \
     ${sampleID}.read_distribution.txt
   """
 }
-process runRSeQC_read_duplication {
+process runRSeQCreadDuplication {
   tag "Running RSeQC read_duplication for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
   module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_read_duplication
+  set indivID, sampleID, bam from runSTAR2pass_to_runRSeQCreadDuplication
   output:
   file("${sampleID}.pos.DupRate.xls") \
-    into runRSeQC_read_duplication_to_runMultiQCSample
-  file("${sampleID}.*") into runRSeQC_read_duplication_Output
+    into runRSeQCreadDuplication_to_runMultiQCSample
+  file("${sampleID}.*") into runRSeQCreadDuplicationOutput
   script:
   """
   module list
   read_duplication.py -i ${bam} -o ${sampleID}
   """
 }
-process runRSeQC_read_GC {
+process runRSeQCreadGC {
   tag "Running RSeQC read_GC for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
   module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_QC
+  set indivID, sampleID, bam from runSTAR2pass_to_runRSeQCreadGC
   output:
-  file("${sampleID}.GC.xls") into runRSeQC_read_GC_to_runMultiQCSample
-  file("${sampleID}.*") into runRSeQC_read_GC_Output
+  file("${sampleID}.GC.xls") into runRSeQCreadGC_to_runMultiQCSample
+  file("${sampleID}.*") into runRSeQCreadGCOutput
   script:
   """
   module list
   read_GC.py -i ${bam} -o ${sampleID}
   """
 }
-process runRSeQC_read_NVC {
+process runRSeQCreadNVC {
   tag "Running RSeQC read_NVC for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
   module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_read_NVC
+  set indivID, sampleID, bam from runSTAR2pass_to_runRSeQCreadNVC
   output:
-  file("${sampleID}.*") into runRSeQC_read_NVC_Output
+  file("${sampleID}.*") into runRSeQCreadNVCOutput
   script:
   """
   module list
   read_NVC.py -i ${bam} -o ${sampleID}
   """
 }
-process runRSeQC_read_quality {
+process runRSeQCreadQuality {
   tag "Running RSeQC read_quality for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
   module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_read_quality
+  set indivID, sampleID, bam from runSTAR2pass_to_runRSeQCreadQuality
   output:
-  file("${sampleID}.*") into runRSeQC_read_quality_Output
+  file("${sampleID}.*") into runRSeQCreadQualityOutput
   script:
   """
   module list
   read_quality.py -i ${bam} -o ${sampleID}
   """
 }
-process runRSeQC_tin {
+process runRSeQCtin {
   tag "Running RSeQC tin for ${sampleID}"
   publishDir "${params.output_dir}/${indivID}/${sampleID}/RSeQC"
   module "${params.modules.python3}:${params.modules.rseqc}"
   input:
-  set indivID, sampleID, bam from runSTAR2pass_to_RSeQC_tin
+  set indivID, sampleID, bam from runSTAR2pass_to_runRSeQCtin
+  file(ensembl_bed_file) from generateBED_to_runRSeQCtin
   output:
-  file("${sampleID}.summary.txt") into rseqc_tin_to_createSE
-  file("${file(bam).baseName}.*") into rseqc_tin_Output
+  file("${sampleID}.summary.txt") into runRSeQCtin_to_createSE
+  file("${file(bam).baseName}.*") into runRSeQCtinOutput
   script:
   """
   module list
-  tin.py -i ${bam} -r ${params.gene_bed} > ${sampleID}.summary.txt
+  tin.py -i ${bam} -r ${ensembl_bed_file} > ${sampleID}.summary.txt
   """
 }
 
@@ -529,23 +678,23 @@ process runMultiQCSample {
   input:
   // Method toSortedList() used to ensure task will be cached, not resubmitted
   val rseqc_bam_stat_files \
-    from runRSeQC_bam_stat_to_runMultiQCSample.toSortedList()
+    from runRSeQCbamStat_to_runMultiQCSample.toSortedList()
   val rseqc_geneBody_coverage_files \
-    from runRSeQC_geneBody_coverage_to_runMultiQCSample.toSortedList()
+    from runRSeQCgeneBodyCoverage_to_runMultiQCSample.toSortedList()
   val rseqc_infer_experiment_files \
-    from runRSeQC_infer_experiment_to_runMultiQCSample.toSortedList()
+    from runRSeQCinferExperiment_to_runMultiQCSample.toSortedList()
   val rseqc_inner_distance_files \
-    from runRSeQC_inner_distance_to_runMultiQCSample.toSortedList()
+    from runRSeQCinnerDistance_to_runMultiQCSample.toSortedList()
   val rseqc_junction_annotation_files \
-    from runRSeQC_junction_annotation_to_runMultiQCSample.toSortedList()
+    from runRSeQCjunctionAnnotation_to_runMultiQCSample.toSortedList()
   val rseqc_junction_saturation_files \
-    from runRSeQC_junction_saturation_to_runMultiQCSample.toSortedList()
+    from runRSeQCjunctionSaturation_to_runMultiQCSample.toSortedList()
   val rseqc_read_distribution_files \
-    from runRSeQC_read_distribution_to_runMultiQCSample.toSortedList()
+    from runRSeQCreadDistribution_to_runMultiQCSample.toSortedList()
   val rseqc_read_duplication_files \
-    from runRSeQC_read_duplication_to_runMultiQCSample.toSortedList()
+    from runRSeQCreadDuplication_to_runMultiQCSample.toSortedList()
   val rseqc_read_GC_files \
-    from runRSeQC_read_GC_to_runMultiQCSample.toSortedList()
+    from runRSeQCreadGC_to_runMultiQCSample.toSortedList()
   val star_files \
     from runSTAR2pass_to_runMultiQCSample.toSortedList()
 
@@ -553,9 +702,9 @@ process runMultiQCSample {
   set file("sample_multiqc.html"), file("sample_multiqc_data/*") \
     into runMultiQCSampleOutput
   file("sample_multiqc_data/multiqc_rseqc_*.txt") \
-    into runMultiQCSample_rseqc_to_createSE
+    into runMultiQCSampleRSeQC_to_createSE
   file("sample_multiqc_data/multiqc_star.txt") \
-    into runMultiQCSample_star_to_createSE
+    into runMultiQCSampleSTAR_to_createSE
 
   script:
   """
@@ -593,12 +742,15 @@ process createSE {
   input:
   // Method toSortedList() used to ensure task will be cached, not resubmitted
   val multiqcfastqc_file from runMultiQCFastq_to_createSE
-  val rseqc_tin_files from rseqc_tin_to_createSE.toSortedList()
+  val rseqc_tin_files from runRSeQCtin_to_createSE.toSortedList()
   val multiqc_rseqc_files \
-    from runMultiQCSample_rseqc_to_createSE.flatten().toSortedList()
-  val multiqc_star_file from runMultiQCSample_star_to_createSE
-  val rsem_genes_files from runRSEM_genes_to_createSE.toSortedList()
-  val rsem_isoforms_files from runRSEM_isoforms_to_createSE.toSortedList()
+    from runMultiQCSampleRSeQC_to_createSE.flatten().toSortedList()
+  val multiqc_star_file from runMultiQCSampleSTAR_to_createSE
+  val rsem_genes_files \
+    from runRSEMcalculateExpressionGenes_to_createSE.toSortedList()
+  val rsem_isoforms_files \
+    from runRSEMcalculateExpressionIsoforms_to_createSE.toSortedList()
+  file(ensembl_gtf_file) from generateGTF_to_createSE
 
   output:
   file("*.rds") into runCreateSEOutput
@@ -874,7 +1026,7 @@ process createSE {
 
   # Create a TxDb object from the GTF file; this will be used to populate the
   # rowRanges of the SummarizedExperiment objects
-  txdb <- makeTxDbFromGFF("${params.gene_gtf}")
+  txdb <- makeTxDbFromGFF("${ensembl_gtf_file}")
 
   for (type in c("gene", "isoform")) {
     # Reorder RSEM output files to match order of sample annotation

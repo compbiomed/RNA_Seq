@@ -12,15 +12,19 @@
    - Set `params.infile` to the full path to the tab-delimited file describing the FASTQ input files.
    - Set `params.output_dir` to the full path to the Nextflow run directory.
    - Set `params.prefix` to a meaningful name for the project.  This string will be used as a prefix to label many output files.
-   - Set the fields of `params.genome` as needed depending on the species being analyzed.
-   - Uncomment fields of `params.createSE.biomart_attributes` depending on the species being analyzed and the Ensembl version being used.
+   - Set the fields of `params.genome`:
+      - `species`: The scientific name of the species being used (e.g., `"Homo sapiens"`, `"Mus musculus"`)
+      - `ucsc`: The UCSC build corresponding to the FASTA reference that will be used (e.g., `"hg38"`, `"mm10"`), as generated, for example, by [make_ucsc_references.qsub](https://github.com/compbiomed/genome-reference-scripts/blob/master/make_ucsc_references.qsub)
+      - `assembly`: The corresponding genome assembly (e.g., `"GRCh38"`, `"GRCm38"`)
+      - `set`: The subset of sequences that will be used: `"base"` (autosomes, sex chromosomes, and mitochondrial chromosome), `"base_random"` (base sequences plus random/unplaced contigs), or `"base_random_althap"` (base and random sequences plus alternative haplotype sequences); see [make_ucsc_references.qsub](https://github.com/compbiomed/genome-reference-scripts/blob/master/make_ucsc_references.qsub) for more details
+      - `ensembl`: The Ensembl build number that will be used (e.g., `100`)
    - Change `params.read_length`, `params.paired_end`, and `params.stranded` if needed (rare).
 
-4. Rename the `RNA-seq_template.config` file to something more meaningful (e.g., the value of `params.prefix` with the extension `.config`)
+4. Rename the `RNA-seq_template.config` file to something more meaningful (e.g., `[params.prefix].config`)
 
 5. Start the Nextflow run using the qsub file as follows:
 
-   `qsub submit_RNA_Seq.qsub [config filename]`
+   `qsub -P [SGE project name] submit_RNA_Seq.qsub [config filename]`
 
 This will run the Nextflow script `RNA_Seq.nf` using the input file and config files from steps 2-4.
 
@@ -28,6 +32,13 @@ This will run the Nextflow script `RNA_Seq.nf` using the input file and config f
 
 ### `RNA_Seq.nf`
 This Nextflow pipeline contains the following processes:
+#### Setup
+- `generateGTF`:
+   - Retrieve a GTF file from Ensembl for the species, genome assembly, and Ensembl build number specified in the .config file
+   - Use the UCSC `chromAlias` table for the corresponding UCSC genome build to convert the sequence names (i.e., chromosomes) from Ensembl to UCSC nomenclature
+   - Limit the result to the subset of sequences specified in `params.genome.set` (e.g., `"base_random"`)
+- `generateBED`: Use the UCSC command-line utilities `gtfToGenePred` and `genePredToBed` to convert the GTF file to a BED file (for use with [RSeQC](http://rseqc.sourceforge.net) below)
+- `runRSEMprepareReference`: Prepare a set of [RSEM](https://deweylab.github.io/RSEM/) reference files using the FASTA reference specified in the .config file and the Ensembl
 #### FASTQ-level QC
 - `runFastQC`: Use [FastQC](https://www.bioinformatics.babraham.ac.uk/projects/fastqc/) to perform QC on each pair of FASTQ files
 - `runMultiQCFastq`: Compile output from `runFastQC` into TSV tables and HTML report using [MultiQC](https://multiqc.info/)
@@ -36,33 +47,33 @@ This Nextflow pipeline contains the following processes:
 - `runSTARgenomeGenerate`: Create a new genome reference from splice junctions inferred from first-pass STAR alignment
 - `runSTAR2pass`: Perform a second-pass alignment to the genome reference produced by `runSTARgenomeGenerate`
 #### BAM QC, performed using [RSeQC](http://rseqc.sourceforge.net)
-- `runRSeQC_bam_stat`
-- `runRSeQC_clipping_profile`
-- `runRSeQC_deletion_profile`
-- `runRSeQC_geneBody_coverage` *Note: this is a very slow step*
-- `runRSeQC_infer_experiment`
-- `runRSeQC_inner_distance`
-- `runRSeQC_insertion_profile`
-- `runRSeQC_junction_annotation`
-- `runRSeQC_junction_saturation`
-- `runRSeQC_read_distribution`
-- `runRSeQC_read_duplication`
-- `runRSeQC_read_GC`
-- `runRSeQC_read_NVC`
-- `runRSeQC_read_quality`
-- `runRSeQC_tin` *Note: this is a very slow step*
+- `runRSeQCbamStat`
+- `runRSeQCclippingProfile`
+- `runRSeQCdeletionProfile`
+- `runRSeQCgeneBodyCoverage` *Note: this is a very slow step*
+- `runRSeQCinferExperiment`
+- `runRSeQCinnerDistance`
+- `runRSeQCinsertionProfile`
+- `runRSeQCjunctionAnnotation`
+- `runRSeQCjunctionSaturation`
+- `runRSeQCreadDistribution`
+- `runRSeQCreadDuplication`
+- `runRSeQCreadGC`
+- `runRSeQCreadNVC`
+- `runRSeQCreadQuality`
+- `runRSeQCtin` *Note: this is a very slow step*
 #### Other BAM-level QC
 - `runMultiQCSample`: Compile output from RSeQC and STAR using MultiQC
 #### Post-alignment processing
-- `runRSEM`: Use [RSEM](https://deweylab.github.io/RSEM/) to estimate gene- and transcript (isoform)-level expression
-- `createSE`: Create [SummarizedExperiment](https://bioconductor.org/packages/release/bioc/html/SummarizedExperiment.html) R objects, one for gene-level expression and one for transcript-level expression; each object contains several estimates of expression from RSEM, as well as feature-level annotation
+- `runRSEMcalculateExpression`: Use [RSEM](https://deweylab.github.io/RSEM/) to estimate gene- and transcript (isoform)-level expression
+- `createSE`: Create [SummarizedExperiment](https://bioconductor.org/packages/release/bioc/html/SummarizedExperiment.html) R objects, one for gene-level expression and one for transcript-level expression; each object contains several estimates of expression from RSEM, as well as QC parameters and feature-level annotation
 
 ### `RNA_Seq_template.config`
 This configuration file is intended to be used only with this Nextflow script.  It makes a number of assumptions about underlying directory structures and filenames.
 The parameters that are typically changed are:
 
 #### `params.infile`
-Path to a TSV file containing the following columns:
+Full path to a TSV file containing the following columns:
 - `INDIVIDUAL_ID`: An ID for an individual from which one or more samples was obtained.
 - `SAMPLE_ID`: An ID for each sample.  **This field cannot be left blank or set to `NA`.**
 - `LIBRARY_ID`: An ID for each library prepared from a sample.
@@ -78,7 +89,7 @@ Path to a TSV file containing the following columns:
 Note: some of these fields are discussed in more detail within the [GATK read groups documentation](https://software.broadinstitute.org/gatk/documentation/article.php?id=6472).
 
 #### `params.output_dir`
-Path where the Nextflow output should be written
+Full path where the Nextflow output should be written
 
 #### `params.prefix`
 Prefix for Nextflow output files
