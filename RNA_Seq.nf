@@ -294,6 +294,7 @@ process runRSEMprepareReference {
   tag "Preparing RSEM reference"
   publishDir "${params.output_dir}/Output/RSEM"
 
+  module params.modules.R
   module params.modules.rsem
 
   input:
