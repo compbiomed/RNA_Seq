@@ -825,19 +825,19 @@ process createSE {
     "${multiqcfastqc_file}", sep="\\t", row.names=1
   )
 
-  # Initialize a data frame with FASTQ filenames in the row names
-  aggregate.by <- data.frame(row.names=output[["multiqcfastqc"]][["Filename"]])
-  # Extract the read ID (R1 or R2) from FASTQ filenames, and use filenames
-  # and read IDs to look up the sample IDs from input table
+  # Initialize a data frame with FASTQ filename prefixes in the row names
+  aggregate.by <- data.frame(row.names=rownames(output[["multiqcfastqc"]]))
   aggregate.by[["sample"]] <- NA_character_
-  aggregate.by[["read"]] <- sub(
-    ".+_(R[12]).+", "\\\\1", rownames(aggregate.by)
-  )
-
-  for (read in ${params.paired_end ? 'c("R1", "R2")' : 'c("R1")'}) {
+  # Extract the read ID (1 or 2) from FASTQ filename prefixes
+  # Note: the FASTQ filename prefix is expected to end in "1" or "2"
+  aggregate.by[["read"]] <- sub(".+([12])\$", "\\\\1", rownames(aggregate.by))
+  # Convert read ID from 1 -> R1 and 2 -> R2 to match column names of input file
+  aggregate.by[["read"]] <- paste0("R", aggregate.by[["read"]])
+  # Use filename prefixes and read IDs to look up sample IDs from input table
+  for (read in sort(unique(aggregate.by[["read"]]))) {
     i <- which(aggregate.by[["read"]] == read)
     aggregate.by[["sample"]][i] <- output[["inputfile"]][["SAMPLE_ID"]][
-      match(rownames(aggregate.by)[i], basename(output[["inputfile"]][[read]]))
+      pmatch(rownames(aggregate.by)[i], basename(output[["inputfile"]][[read]]))
     ]
   }
   # Collapse the MultiQC results first by sample ID, then by read
