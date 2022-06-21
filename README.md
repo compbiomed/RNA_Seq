@@ -2,9 +2,9 @@
 
 ## Setting up a new run
 
-1. Create a run directory, change current directory to it, and retrieve files from GitHub using the command:
+1. Create a run directory, change current directory to it, and retrieve files from GitHub to it using the command:
 
-   `git clone https://github.com/compbiomed/RNA_Seq`
+   `git clone https://github.com/compbiomed/RNA_Seq ./`
 
 2. Generate a tab-delimited Nextflow input file following the format described below under `params.infile`.
 
@@ -73,11 +73,11 @@ This configuration file is intended to be used only with this Nextflow script.  
 The parameters that are typically changed are:
 
 #### `params.infile`
-Full path to a TSV file containing the following columns (those in bold are **not optional** and cannot be left blank or set to `NA`):
-- **`INDIVIDUAL_ID`**: An ID for an individual from which one or more samples was obtained (if only one sample was sequenced from each individual, this can be the same as `SAMPLE_ID`)
+Full path to a TSV file containing the following columns (those in bold are **not optional** and cannot be left blank):
+- `INDIVIDUAL_ID`: An ID for an individual from which one or more samples was obtained (if only one sample was sequenced from each individual, this can be the same as `SAMPLE_ID`, or left blank)
 - **`SAMPLE_ID`**: An ID for each sample
-- **`LIBRARY_ID`**: An ID for each library prepared from a sample (if only one library was sequenced from each sample, this can be the same as `SAMPLE_ID`)
-- **`RG_ID`**: Read Group ID: the flowcell ID, optionally followed by a lane-specific suffix (for instruments with independent lanes), followed by a sample-specific identifier (e.g., `SAMPLE_ID`)
+- `LIBRARY_ID`: An ID for each library prepared from a sample (if only one library was sequenced from each sample, this can be the same as `SAMPLE_ID`, or left blank)
+- `RG_ID`: Read Group ID: the flowcell ID, optionally followed by a lane-specific suffix (for instruments with independent lanes), followed by a sample-specific identifier (e.g., `SAMPLE_ID`)
 - `PLATFORM_UNIT`: `RG ID`, optionally followed by a suffix specific to a library (if more than one library was sequenced per sample)
 - `PLATFORM`: Sequencing platform, e.g., "illumina" for Illumina instruments
 - `PLATFORM_MODEL`: Instrument model, e.g., "NextSeq", "HiSeq", etc.)
