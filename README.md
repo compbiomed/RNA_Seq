@@ -6,7 +6,7 @@ The pipeline can run in one of two modes:
 
 1. Create a run directory, change current directory to it, and retrieve files from GitHub using the command:
 
-   `git clone https://github.com/compbiomed/RNA_Seq`
+   `git clone https://github.com/Operend/RNA_Seq`
 
 2. Rename the `RNA-seq_template.config` file to something more meaningful (e.g., the value of `params.prefix` with the extension `.config`)
 3. Edit the renamed `.config` file:
