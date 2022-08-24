@@ -14,8 +14,8 @@ config_filename="${1}"
 # Load and list modules
 module load nextflow
 module list
-
+export NXF_ENABLE_SECRETS=true
 # Note: this command expects RNA_Seq.nf to be in the current working directory
 nextflow -C "${config_filename}" \
-         run RNA_Seq.nf \
-         -with-trace -with-timeline -with-dag -resume
+         run -w /work RNA_Seq.nf \
+         -with-trace 

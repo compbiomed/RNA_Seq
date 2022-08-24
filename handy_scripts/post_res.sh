@@ -1,0 +1,1 @@
+singularity run --bind /rprojectnb/pulmseq:/rprojectnb/pulmseq library://operend/libs/opyrnd.sif python3 post_nf_output.py -r /rprojectnb/pulmseq/daupipe/OUTPUT_SM/ -j CBM_RNASeq -i /usr2/collab/dulrich/development/RNA_Seq/this_tsv_file_MCL2.tsv -s MCL2

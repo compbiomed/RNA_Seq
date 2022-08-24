@@ -1,0 +1,7 @@
+name: entityfs
+channels:
+    - conda-forge
+dependencies:
+  - python=3.9.7
+  - pyfuse3=3.2.1
+  - trio=0.20.0
