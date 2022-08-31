@@ -952,49 +952,91 @@ process createSE {
 
   # Open connection to Biomart #################################################
 
-  # Determine from parameters which Biomart dataset and hostname should be used
-  biomart <- list(
-    database = "ENSEMBL_MART_ENSEMBL",
-    dataset = paste(
-      tolower(
-        sub("^(.)[^ ]+ (.+)\$", "\\\\1\\\\2", "${params.genome.species}")
-      ),
-      "gene_ensembl", sep="_"
-    ),
-    host = with(
-      listEnsemblArchives(), url[version == "${params.genome.ensembl}"]
+  # Retrieve table of Ensembl (Biomart) archives
+  ensembl_archives <- listEnsemblArchives()
+  ensembl_version <- ${params.genome.ensembl}
+  # Extract version of current Ensembl release
+  current_version <- with(ensembl_archives, version[current_release == "*"])
+
+  # Create vector of Biomart hosts from Nextflow config parameter: an array of
+  # Ensembl mirrors, from fastest (most local) to slowest (most remote)
+  # Note: specifying mirrors in this order through config file is necessary
+  #       because 'ensemblRedirect' argument to useMart() has been deprecated.
+  biomart_hosts <- c('${params.biomart.mirrors.join("','")}')
+  # If specified version is not current version, look up the URL for the
+  # corresponding archive server and prepend it to the vector of Biomart hosts
+  # (so it is tried first)
+  if (ensembl_version != current_version) {
+    biomart_hosts <- c(
+      with(ensembl_archives, url[version == ensembl_version]),
+      biomart_hosts
     )
-  )
-  # Note: this connection is done in a repeat loop because it doesn't always
-  #       work on the first try; a maximum number of attempts is included to
-  #       keep it from endlessly looping if Biomart is down
-  cat(
-    "Opening connection to Biomart",
-    with(
-      biomart,
-      sprintf(
-        "(database %s, dataset %s, host %s, Ensembl version %s).\\n",
-        database, dataset, host, "${params.genome.ensembl}"
+  }
+
+  for (i in seq_along(biomart_hosts)) {
+    biomart <- list(
+      database = "ENSEMBL_MART_ENSEMBL",
+      dataset = paste(
+        tolower(
+          sub("^(.)[^ ]+ (.+)\$", "\\\\1\\\\2", "${params.genome.species}")
+        ),
+        "gene_ensembl", sep="_"
+      ),
+      host = biomart_hosts[i]
+    )
+
+    cat(
+      "Opening connection to Biomart:",
+      with(
+        biomart,
+        sprintf(
+          "database %s, dataset %s, host %s, Ensembl version %s.\\n",
+          database, dataset, host, ensembl_version
+        )
       )
     )
-  )
-  max.attempts <- 10
-  attempt <- 1
-  repeat {
-    cat(sprintf("Connection attempt #%d of %d...", attempt, max.attempts))
-    mart <- try(
-      with(biomart, useMart(biomart=database, dataset=dataset, host=host)),
-      silent=TRUE
-    )
-    if (inherits(mart, "Mart")) {
-      cat("successful.\\n")
+
+    # Attempt to open a connection to Biomart
+    # Note: this connection is done in a loop because it doesn't always
+    #       work on the first try; a maximum number of attempts is included to
+    #       keep it from endlessly looping if Biomart is down
+    max_attempts <- 10
+    success <- FALSE
+    for (attempt in seq(max_attempts)) {
+      mart <- try(
+        with(biomart, useMart(biomart=database, dataset=dataset, host=host)),
+        silent=TRUE
+      )
+      cat(sprintf("Connection attempt #%d of %d...", attempt, max_attempts))
+      if (inherits(mart, "Mart")) {
+        cat("successful.\\n")
+        success <- TRUE
+        break
+      }
+      cat("\\n")
+    }
+    if (success) {
+      # If successful, exit loop
       break
+    } else {
+      # If unsuccessful after max attempts, print message
+      cat(
+        "Could not connect to Biomart server", biomart[["host"]],
+        paste0("(Ensembl version ", ensembl_version, ")"),
+        "after", max_attempts, "attempts"
+      )
+      cat("\\n")
+      if (i == length(biomart_hosts)) {
+        # If all Biomart hosts have been exhausted, exit with error message
+        stop("Cannot connect to Biomart")
+      } else {
+        # Otherwise, if first pass used older Ensembl build (with archive host),
+        # revert to current Ensembl version before advancing to next mirror
+        if (ensembl_version != current_version) {
+          ensembl_version <- current_version
+        }
+      }
     }
-    cat("\\n")
-    if (attempt == max.attempts) {
-      stop("Could not connect to Biomart after ", max.attempts, " attempts")
-    }
-    attempt <- attempt + 1
   }
 
   # Create SummarizedExperiment objects ########################################
@@ -1010,10 +1052,10 @@ process createSE {
   )
   biomart.attributes <- list(
     gene = c(
-      '${params.createSE.biomart_attributes.gene.join("',\n'")}'
+      '${params.biomart.attributes.gene.join("',\n'")}'
     ),
     isoform = c(
-      '${params.createSE.biomart_attributes.isoform.join("',\n'")}'
+      '${params.biomart.attributes.isoform.join("',\n'")}'
     )
   )
   rds.files <- c(gene='${rds_files.gene}', isoform='${rds_files.isoform}')
