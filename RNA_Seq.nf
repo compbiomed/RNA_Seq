@@ -67,7 +67,7 @@ process generateGTF {
   # Create a regex that will match any GTF lines
   # beginning with one of the sequence names present in the FASTA file
   readarray -t seq_names < <(grep '^>' ${params.ref_fasta} | sed -r 's/^>//')
-  seq_name_regex="\$(IFS='|'; echo "^(\${seq_names[*]})")"
+  seq_name_regex="\$(IFS='|'; echo "^(\${seq_names[*]})")\\t"
 
   # The following command:
   # - retrieves and extracts the GTF file from Ensembl,
@@ -80,7 +80,7 @@ process generateGTF {
     chromAlias.txt \
     <(wget ${ensembl_gtf_url} -O - | zgrep -v "^#" | sort -k1) \
     | cut -f2- \
-    | grep -E "\${seq_name_regex}" \
+    | grep -P "\${seq_name_regex}" \
     | gzip -c > ${ensembl_gtf_file}
   """
 }
