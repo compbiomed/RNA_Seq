@@ -41,47 +41,70 @@ process generateGTF {
     )
 
   script:
-  // Set parameters specific to chromAlias table
-  chromAlias_url =
-    "${params.urls.ucsc_base_url}/goldenPath/" +
-    "${params.genome.ucsc}/database/chromAlias.txt.gz"
-  chromAlias_join_field = 1
-
-  // Construct Ensembl GTF URL
+  // Construct Ensembl GTF URL and extract base GTF filename
   ensembl_gtf_url =
     "${params.urls.ensembl_base_url}/release-${params.genome.ensembl}/gtf/" +
     "${params.genome.species.toLowerCase().replaceAll(" ","_")}" + "/" +
     "${params.genome.species.replaceAll(" ","_")}" + "." +
     "${params.genome.assembly}.${params.genome.ensembl}.gtf.gz"
-  // Construct output GTF filename with suffix based on genomic subset used
   ensembl_gtf_file = "${file(ensembl_gtf_url).name}"
-  ensembl_gtf_file =
-    "${ensembl_gtf_file.replaceFirst("\\.gtf\\.gz", "")}" + "." +
-    "ucsc.${params.genome.set}.gtf.gz"
+
+  // Set parameters based on whether a UCSC build was specified
+  if (params.genome.ucsc != null && params.genome.ucsc != "") {
+    chromAlias_url =
+      "${params.urls.ucsc_base_url}/goldenPath/" +
+      "${params.genome.ucsc}/database/chromAlias.txt.gz"
+    chromAlias_join_field = 1
+    ensembl_gtf_file =
+      "${ensembl_gtf_file.replaceFirst("\\.gtf\\.gz", "")}" + "." +
+      "ucsc.${params.genome.set}.gtf.gz"
+  } else {
+    ensembl_gtf_file =
+      "${ensembl_gtf_file.replaceFirst("\\.gtf\\.gz", "")}" + "." +
+      "${params.genome.set}.gtf.gz"
+  }
 
   """
-  # Retrieve and gunzip chromAlias file from UCSC, keeping only first two
-  # columns, and sorting on first column (non-UCSC alias) 
-  wget ${chromAlias_url} -O - | zcat | cut -f1-2 | sort -k1 > chromAlias.txt
+  # Define temporary GTF filename
+  gtf_tempfile="\$(mktemp)"
 
+  # Extract an array of sequence identifiers from the FASTA file
+  # Note: this command only retains text before first space in each FASTA header
+  echo "Limiting GTF to identifiers in subset: '${params.genome.set}'"
+  readarray -t seq_ids < <(
+    grep '^>' ${params.ref_fasta} | sed -r 's/^>([^ ]+).*/\\1/'
+  )
   # Create a regex that will match any GTF lines
-  # beginning with one of the sequence names present in the FASTA file
-  readarray -t seq_names < <(grep '^>' ${params.ref_fasta} | sed -r 's/^>//')
-  seq_name_regex="\$(IFS='|'; echo "^(\${seq_names[*]})")\\t"
+  # beginning with one of the sequence IDs present in the FASTA file
+  seq_id_regex="\$(IFS='|'; echo "^(\${seq_ids[*]})")\\t"
 
-  # The following command:
-  # - retrieves and extracts the GTF file from Ensembl,
-  #   removing comments and sorting on first column
-  # - uses `join` to convert chromosome names in first column of GTF file
-  #   to UCSC nomenclature, and removes redundant first column of output
-  # - Limits the output to only those sequence names in the FASTA file
-  # - writes the modified GTF to a gzipped file
-  join -t \$'\\t' -1 ${chromAlias_join_field} -2 1 \
-    chromAlias.txt \
-    <(wget ${ensembl_gtf_url} -O - | zgrep -v "^#" | sort -k1) \
-    | cut -f2- \
-    | grep -P "\${seq_name_regex}" \
-    | gzip -c > ${ensembl_gtf_file}
+  if [[ ${params.genome.ucsc} != "null" && ${params.genome.ucsc} != "" ]]
+  then
+    echo "Changing GTF from Ensembl to UCSC sequence identifiers."
+
+    # Retrieve and gunzip chromAlias file from UCSC, keeping only first two
+    # columns, and sorting on first column (non-UCSC alias) 
+    wget ${chromAlias_url} -O - | zcat | cut -f1-2 | sort -k1 > chromAlias.txt
+
+    # - Retrieve and extract GTF file from Ensembl,
+    #   removing comments and sorting on first column
+    # - Use `join` to convert sequence identifiers in first column of GTF file
+    #   to UCSC nomenclature, and remove redundant first column of output
+    join -t \$'\\t' -1 ${chromAlias_join_field} -2 1 \
+      chromAlias.txt \
+      <(wget ${ensembl_gtf_url} -O - | zgrep -v "^#" | sort -k1) \
+      | cut -f2- > \${gtf_tempfile}
+  else
+    # Retrieve and extract GTF file from Ensembl and gunzip to a temporary file
+    wget ${ensembl_gtf_url} -O | gzip -dc > \${gtf_tempfile}
+  fi
+
+  # Limit output to only those sequence identifiers in the FASTA file,
+  # and write output to a gzipped GTF file
+  grep -P "\${seq_id_regex}" \${gtf_tempfile} | gzip -c > ${ensembl_gtf_file}
+
+  # Clean up
+  rm -f \${gtf_tempfile}
   """
 }
 

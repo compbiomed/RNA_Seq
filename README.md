@@ -15,6 +15,7 @@
    - Set the fields of `params.genome`:
       - `species`: The scientific name of the species being used (e.g., `"Homo sapiens"`, `"Mus musculus"`)
       - `ucsc`: The UCSC build corresponding to the FASTA reference that will be used (e.g., `"hg38"`, `"mm10"`), as generated, for example, by [make_ucsc_references.qsub](https://github.com/compbiomed/genome-reference-scripts/blob/master/make_ucsc_references.qsub)
+      If an Ensembl genome reference is to be used instead, either remove this field or leave it set to `""`.
       - `assembly`: The corresponding genome assembly (e.g., `"GRCh38"`, `"GRCm38"`)
       - `set`: The subset of sequences that will be used: `"base"` (autosomes, sex chromosomes, and mitochondrial chromosome), `"base_random"` (base sequences plus random/unplaced contigs), or `"base_random_althap"` (base and random sequences plus alternative haplotype sequences); see [make_ucsc_references.qsub](https://github.com/compbiomed/genome-reference-scripts/blob/master/make_ucsc_references.qsub) for more details
       - `ensembl`: The Ensembl build number that will be used (e.g., `100`)
