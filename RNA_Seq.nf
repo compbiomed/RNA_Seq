@@ -176,10 +176,6 @@ process runSTAR1pass {
     --outFilterMultimapNmax ${params.STAR.outFilterMultimapNmax} \
     --outFilterType BySJout \
     --readFilesCommand zcat
-
-  # If an earlier version of STAR is used, move the file Log.out
-  # to the output directory (which is the behavior of later versions of STAR)
-  [[ -e Log.out ]] && mv -v Log.out ${params.STAR.genomeDir}/
   """
 }
 
@@ -195,6 +191,7 @@ process runSTARgenomeGenerate {
   file(ensembl_gtf_file) from generateGTF_to_runSTARgenomeGenerate
 
   output:
+  file("Log.out") into runSTARgenomeGenerateOutput
   file("${genomeDir}") into runSTARgenomeGenerate_to_runSTAR2pass
 
   script:
