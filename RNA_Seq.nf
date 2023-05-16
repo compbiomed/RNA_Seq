@@ -217,7 +217,7 @@ process runSTARgenomeGenerate {
 
   # If an earlier version of STAR is used, move the file Log.out
   # to the output directory (which is the behavior of later versions of STAR)
-  [[ -e Log.out ]] && mv -v Log.out ${params.STAR.genomeDir}/
+  [[ -e Log.out ]] && mv -v Log.out ${genomeDir}/
   """
 }
 
