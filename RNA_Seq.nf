@@ -84,7 +84,8 @@ process generateGTF {
 
     # Retrieve and gunzip chromAlias file from UCSC, keeping only first two
     # columns, and sorting on first column (non-UCSC alias) 
-    wget ${chromAlias_url} -O - | zcat | cut -f1-2 | sort -k1 > chromAlias.txt
+    ${params.wget} ${chromAlias_url} -O - \
+      | zcat | cut -f1-2 | sort -k1 > chromAlias.txt
 
     # - Retrieve and extract GTF file from Ensembl,
     #   removing comments and sorting on first column
@@ -92,11 +93,11 @@ process generateGTF {
     #   to UCSC nomenclature, and remove redundant first column of output
     join -t \$'\\t' -1 ${chromAlias_join_field} -2 1 \
       chromAlias.txt \
-      <(wget ${ensembl_gtf_url} -O - | zgrep -v "^#" | sort -k1) \
+      <(${params.wget} ${ensembl_gtf_url} -O - | zgrep -v "^#" | sort -k1) \
       | cut -f2- > \${gtf_tempfile}
   else
     # Retrieve and extract GTF file from Ensembl and gunzip to a temporary file
-    wget ${ensembl_gtf_url} -O | gzip -dc > \${gtf_tempfile}
+    ${params.wget} ${ensembl_gtf_url} -O | gzip -dc > \${gtf_tempfile}
   fi
 
   # Limit output to only those sequence identifiers in the FASTA file,
@@ -135,8 +136,8 @@ process generateBED {
 
   """
   # Retrieve command-line utilities from UCSC and make them executable
-  wget ${params.urls.ucsc_app_url}/gtfToGenePred
-  wget ${params.urls.ucsc_app_url}/genePredToBed
+  ${params.wget} ${params.urls.ucsc_app_url}/gtfToGenePred
+  ${params.wget} ${params.urls.ucsc_app_url}/genePredToBed
   chmod +x gtfToGenePred genePredToBed
   # Convert GTF file to BED file via intermediate genePred format
   ./gtfToGenePred ${ensembl_gtf_file} ${ensembl_gp_file}
