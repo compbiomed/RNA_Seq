@@ -766,8 +766,12 @@ process createSE {
   publishDir "${params.output_dir}/Output/Expression"
 
   module params.modules.R
+  module params.modules.libcurl
 
   input:
+  // Preload libcurl shared library file before R is run, in order to avoid
+  // SSL handshake error (in R 4.x); recommended by Katia Bulekova on 2025-01-22
+  env LD_PRELOAD from Channel.of("\${SCC_LIBCURL_LIB}/libcurl.so")
   // Method toSortedList() used to ensure task will be cached, not resubmitted
   val multiqcfastqc_file from runMultiQCFastq_to_createSE
   val rseqc_tin_files from runRSeQCtin_to_createSE.toSortedList()
