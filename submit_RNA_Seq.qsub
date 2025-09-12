@@ -12,7 +12,7 @@
 config_filename="${1}"
 
 # Load and list modules
-module load nextflow
+module load nextflow/21.10.6
 module list
 
 # Note: this command expects RNA_Seq.nf to be in the current working directory
