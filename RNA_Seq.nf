@@ -983,26 +983,19 @@ process createSE {
 
   # Open connection to Biomart #################################################
 
-  # Retrieve table of Ensembl (Biomart) archives
-  ensembl_archives <- listEnsemblArchives()
   ensembl_version <- ${params.genome.ensembl}
-  # Extract version of current Ensembl release
-  current_version <- with(ensembl_archives, version[current_release == "*"])
 
   # Create vector of Biomart hosts from Nextflow config parameter: an array of
   # Ensembl mirrors, from fastest (most local) to slowest (most remote)
   # Note: specifying mirrors in this order through config file is necessary
   #       because 'ensemblRedirect' argument to useMart() has been deprecated.
   biomart_hosts <- c('${params.biomart.mirrors.join("','")}')
-  # If specified version is not current version, look up the URL for the
-  # corresponding archive server and prepend it to the vector of Biomart hosts
+  # Prepend the version-specific archive URL to the vector of Biomart hosts
   # (so it is tried first)
-  if (ensembl_version != current_version) {
-    biomart_hosts <- c(
-      with(ensembl_archives, url[version == ensembl_version]),
-      biomart_hosts
-    )
-  }
+  biomart_hosts <- c(
+    sprintf("https://e%d.ensembl.org", ensembl_version),
+    biomart_hosts
+  )
 
   for (i in seq_along(biomart_hosts)) {
     biomart <- list(
@@ -1060,12 +1053,6 @@ process createSE {
       if (i == length(biomart_hosts)) {
         # If all Biomart hosts have been exhausted, exit with error message
         stop("Cannot connect to Biomart")
-      } else {
-        # Otherwise, if first pass used older Ensembl build (with archive host),
-        # revert to current Ensembl version before advancing to next mirror
-        if (ensembl_version != current_version) {
-          ensembl_version <- current_version
-        }
       }
     }
   }
