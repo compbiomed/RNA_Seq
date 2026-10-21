@@ -387,7 +387,7 @@ process runRSEMcalculateExpression {
 
   # Compute expression values using RSEM
   rsem-calculate-expression \
-    --calc-ci --estimate-rspd --no-bam-output --bam \
+    --quiet --calc-ci --estimate-rspd --no-bam-output --bam \
     ${params.paired_end ? "--paired-end" : ""} \
     --forward-prob ${params.stranded ? 0 : 0.5} \
     -p \$NSLOTS \
